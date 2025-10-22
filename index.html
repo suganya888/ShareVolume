@@ -1,0 +1,228 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SEC Company Data</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            margin: 0;
+            padding: 20px;
+            background-color: #f4f7f6;
+            color: #333;
+            line-height: 1.6;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            min-height: 100vh;
+        }
+        .container {
+            background-color: #fff;
+            padding: 30px;
+            border-radius: 8px;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
+            max-width: 800px;
+            width: 100%;
+            text-align: center;
+            margin-top: 20px;
+        }
+        h1 {
+            color: #2c3e50;
+            margin-bottom: 25px;
+            font-size: 2.2em;
+        }
+        h2 {
+            color: #34495e;
+            margin-top: 30px;
+            font-size: 1.5em;
+        }
+        .data-section {
+            display: flex;
+            justify-content: space-around;
+            flex-wrap: wrap;
+            margin-top: 20px;
+        }
+        .data-card {
+            background-color: #ecf0f1;
+            border-radius: 6px;
+            padding: 20px;
+            margin: 10px;
+            flex: 1 1 calc(50% - 40px); /* Two cards per row on larger screens */
+            min-width: 280px;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.05);
+            transition: transform 0.2s ease-in-out;
+        }
+        .data-card:hover {
+            transform: translateY(-3px);
+        }
+        .data-card h3 {
+            color: #2980b9;
+            margin-top: 0;
+            font-size: 1.2em;
+        }
+        .data-card .value {
+            font-size: 2em;
+            font-weight: bold;
+            color: #27ae60;
+            margin-bottom: 5px;
+        }
+        .data-card .label {
+            font-size: 0.9em;
+            color: #7f8c8d;
+        }
+        #loading-message, #error-message {
+            margin-top: 20px;
+            padding: 15px;
+            border-radius: 5px;
+            font-weight: bold;
+            display: none; /* Hidden by default */
+        }
+        #loading-message {
+            background-color: #d0e0ed;
+            color: #2c3e50;
+        }
+        #error-message {
+            background-color: #f8d7da;
+            color: #721c24;
+            border: 1px solid #f5c6cb;
+        }
+        .footer {
+            margin-top: auto; /* Pushes the footer to the bottom */
+            padding-top: 30px;
+            font-size: 0.8em;
+            color: #7f8c8d;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1 id="share-entity-name">Loading Company Data...</h1>
+
+        <div id="loading-message">Fetching data...</div>
+        <div id="error-message"></div>
+
+        <div id="data-display" style="display: none;">
+            <h2>Entity Common Stock Shares Outstanding (FY > 2020)</h2>
+            <div class="data-section">
+                <div class="data-card">
+                    <h3>Maximum Shares</h3>
+                    <div class="value" id="share-max-value"></div>
+                    <div class="label">Fiscal Year: <span id="share-max-fy"></span></div>
+                </div>
+                <div class="data-card">
+                    <h3>Minimum Shares</h3>
+                    <div class="value" id="share-min-value"></div>
+                    <div class="label">Fiscal Year: <span id="share-min-fy"></span></div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <footer class="footer">
+        Data provided by the U.S. Securities and Exchange Commission.
+    </footer>
+
+    <script>
+        // Function to format large numbers for readability
+        function formatNumber(num) {
+            if (num === null || num === undefined) return 'N/A';
+            if (num >= 1_000_000_000) {
+                return (num / 1_000_000_000).toFixed(2) + ' Billion';
+            }
+            if (num >= 1_000_000) {
+                return (num / 1_000_000).toFixed(2) + ' Million';
+            }
+            return num.toLocaleString();
+        }
+
+        async function fetchAndRenderData(cik) {
+            const loadingMessage = document.getElementById('loading-message');
+            const errorMessage = document.getElementById('error-message');
+            const dataDisplay = document.getElementById('data-display');
+            const entityNameElement = document.getElementById('share-entity-name');
+            const titleElement = document.querySelector('title');
+
+            // Show loading state
+            loadingMessage.style.display = 'block';
+            errorMessage.style.display = 'none';
+            dataDisplay.style.display = 'none';
+            entityNameElement.textContent = `Loading Company Data (CIK: ${cik})...`;
+            titleElement.textContent = `Loading Company Data (CIK: ${cik})`;
+
+            try {
+                // Construct the SEC API URL for the given CIK
+                const secApiUrl = `https://data.sec.gov/api/xbrl/companyconcept/CIK${cik}/dei/EntityCommonStockSharesOutstanding.json`;
+                
+                // Use a CORS proxy as direct fetch to SEC API might be blocked by browser's CORS policy.
+                // The brief explicitly allows "any proxy, e.g. AIPipe".
+                // 'https://api.allorigins.win/raw?url=' is a publicly available CORS proxy.
+                const proxyUrl = `https://api.allorigins.win/raw?url=${encodeURIComponent(secApiUrl)}`;
+
+                const response = await fetch(proxyUrl);
+
+                if (!response.ok) {
+                    throw new Error(`HTTP error! Status: ${response.status} - ${response.statusText}`);
+                }
+
+                const data = await response.json();
+
+                const entityName = data.entityName;
+                const shares = data.units.shares;
+
+                // Filter shares data: fy > 2020 and val is a number
+                let filteredShares = shares.filter(entry => {
+                    return parseInt(entry.fy) > 2020 && typeof entry.val === 'number';
+                });
+
+                if (filteredShares.length === 0) {
+                    throw new Error("No relevant shares data found for the specified criteria (FY > 2020 and numeric value).");
+                }
+
+                // Find max and min values
+                let maxValEntry = filteredShares[0];
+                let minValEntry = filteredShares[0];
+
+                for (const entry of filteredShares) {
+                    if (entry.val > maxValEntry.val) {
+                        maxValEntry = entry;
+                    }
+                    if (entry.val < minValEntry.val) {
+                        minValEntry = entry;
+                    }
+                }
+
+                // Update the DOM elements with the fetched and processed data
+                titleElement.textContent = `${entityName} - SEC Shares Data`;
+                entityNameElement.textContent = entityName;
+                document.getElementById('share-max-value').textContent = formatNumber(maxValEntry.val);
+                document.getElementById('share-max-fy').textContent = maxValEntry.fy;
+                document.getElementById('share-min-value').textContent = formatNumber(minValEntry.val);
+                document.getElementById('share-min-fy').textContent = minValEntry.fy;
+
+                dataDisplay.style.display = 'block'; // Show data section
+
+            } catch (error) {
+                console.error("Failed to fetch or process data:", error);
+                errorMessage.textContent = `Error: ${error.message}. Please check the CIK or try again later.`;
+                errorMessage.style.display = 'block'; // Show error message
+                entityNameElement.textContent = "Error Loading Company Data";
+                titleElement.textContent = "Error";
+                dataDisplay.style.display = 'none'; // Hide data display on error
+            } finally {
+                loadingMessage.style.display = 'none'; // Always hide loading message
+            }
+        }
+
+        // Get CIK from URL query parameter (e.g., ?CIK=0001018724)
+        const urlParams = new URLSearchParams(window.location.search);
+        const cikParam = urlParams.get('CIK');
+
+        // Default CIK for Altria (MO) if no parameter is provided
+        const defaultCik = '0000764180'; 
+
+        // Fetch and render data based on the CIK parameter or the default CIK
+        fetchAndRenderData(cikParam || defaultCik);
+    </script>
+</body>
+</html>
